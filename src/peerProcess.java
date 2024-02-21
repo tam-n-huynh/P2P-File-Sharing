@@ -1,6 +1,4 @@
-import java.io.BufferedReader;
-import java.io.FileReader;
-import java.io.IOException;
+import java.io.*;
 import java.util.ArrayList;
 import java.util.HashMap;
 import java.util.Map;
@@ -17,7 +15,7 @@ public class peerProcess {
     private static int listeningPort;
     private static boolean hasFile;
 
-    // List of all peers from PeerInfo
+    // List of all peers read from PeerInfo
     private static final List<PeerInfo> allPeers = new ArrayList<>();
 
     // Common Configs
@@ -28,7 +26,12 @@ public class peerProcess {
     private static int unchokingInterval;
     private static int fileSize;
 
-    public peerProcess(int peerID) {
+    // Need to add
+    //Bitfield
+
+    private static FileWriter logWriter;
+
+    public peerProcess(int peerID) { // Constructor
         this.peerID = peerID;
 
         // Load PeerInfo
@@ -38,7 +41,7 @@ public class peerProcess {
         // Load CommonConfig
         Map<String, String> commonConfig = loadConfiguration("Common.cfg");
 
-        // Parse and store configuration parameters
+        // Parse and store config parameters
         this.numPreferredNeighbors = Integer.parseInt(commonConfig.get("NumberOfPreferredNeighbors"));
         this.optimisticUnchokingInterval = Integer.parseInt(commonConfig.get("OptimisticUnchokingInterval"));
         this.pieceSize = Integer.parseInt(commonConfig.get("PieceSize"));
@@ -54,17 +57,34 @@ public class peerProcess {
         }
 
         int peerID = Integer.parseInt(args[0]);
+        setUpDirectory(peerID);
+        setUpLogFile(peerID);
+
+        // After the log is created, shut down the logWriter
+        Runtime.getRuntime().addShutdownHook(new Thread(() -> {
+            try {
+                if (logWriter != null) {
+                    System.out.println("Closing log writer...");
+                    logWriter.close();
+                }
+            } catch (IOException e) {
+                e.printStackTrace();
+            }
+        }));
+
+
         peerProcess process = new peerProcess(peerID);
         // Now, the peerProcess has its own information set, and you can proceed to use it
         System.out.println("This peer's ID: " + process.peerID + ", Host: " + process.hostName + ", Port: " + process.listeningPort + ", Has File: " + process.hasFile);
 
-        process.connectToPreviousPeers();
-        process.startServer();
+        process.connectToPreviousPeers(); // Connect to all previous peers before it in the list.
+        process.startServer(); // Start listening to messages.
 
     }
 
     private static Map<String, String> loadConfiguration(String filePath) {
         Map<String, String> config = new HashMap<>();
+
         try (BufferedReader reader = new BufferedReader(new FileReader(filePath))) {
             String line;
             while ((line = reader.readLine()) != null) {
@@ -90,6 +110,7 @@ public class peerProcess {
                     int port = Integer.parseInt(parts[2]);
                     boolean file = Integer.parseInt(parts[3]) == 1;
 
+                    // Create a new peerInfo object about peers
                     PeerInfo peerInfo = new PeerInfo(id, hostname, port, file);
                     // Add the peer information into our list.
                     allPeers.add(peerInfo);
@@ -101,6 +122,8 @@ public class peerProcess {
     }
 
     private static void setCurrentPeerInfo(int currentPeerID) {
+        // We passed in the peerID to the constructor and read PeerInfo
+        // but now we need to go through allpeers to find the info that corresponds to the current peer
         for (PeerInfo peerInfo : allPeers) {
             if (peerInfo.peerID == currentPeerID) {
                 System.out.println(peerInfo.peerID);
@@ -109,9 +132,43 @@ public class peerProcess {
                 listeningPort = peerInfo.listeningPort;
                 hasFile = peerInfo.hasFile;
                 break;
-            } else {
-                // ADD IT TO SET OF PORTS TO CONNECT TO
             }
+        }
+    }
+
+    private static void setUpDirectory(int peerID) {
+        String dirName = "peer_" + peerID;
+        File dir = new File(dirName);
+        if (!dir.exists()) {
+            boolean created = dir.mkdirs();
+            if (created) {
+                System.out.println("Directory created: " + dirName);
+            } else {
+                System.out.println("Failed to create directory: " + dirName);
+            }
+        }
+    }
+
+    private static void setUpLogFile(int peerID) {
+        try {
+            File logFile = new File("log_peer_" + peerID + ".log");
+            if (!logFile.exists()) {
+                logFile.createNewFile();
+            }
+            logWriter = new FileWriter(logFile, true); // Append mode
+        } catch (IOException e) {
+            System.out.println("Failed to create log file for peer " + peerID);
+            e.printStackTrace();
+        }
+    }
+
+    public static void log(String message) {
+        try {
+            logWriter.write(message + "\n");
+            logWriter.flush();
+        } catch (IOException e) {
+            System.out.println("Failed to write to log file.");
+            e.printStackTrace();
         }
     }
 
@@ -133,9 +190,74 @@ public class peerProcess {
                     e.printStackTrace();
                 }
             } else {
+                // Once we find our Peer, this means we haven't seen the ones ahead, so break.
                 break;
             }
         }
+    }
+
+    public void sendMessage(Socket socket, Message message) throws IOException {
+        DataOutputStream dos = new DataOutputStream(socket.getOutputStream());
+        byte[] messageBytes = message.getBytes();
+        dos.write(messageBytes);
+        dos.flush(); // Ensure the message is sent immediately
+    }
+
+    private void handlePeerCommunication(Socket peerSocket, int peerID) {
+        new Thread(() -> {
+            try {
+                //Initial setup
+                //sendMessage(peerSocket, createBitfieldMessage());
+
+                // Loop to continuously listen for messages.
+                while (true) {
+                    Message receivedMessage = receiveMessage(peerSocket);
+                    switch (receivedMessage.getType()) {
+                        case MessageType.BITFIELD:
+                            // handle bitfield
+                            break;
+                        case MessageType.CHOKE:
+                            // handle bitfield
+                            break;
+                        case MessageType.UNCHOKE:
+                            // handle bitfield
+                            break;
+                        case MessageType.INTERESTED:
+                            // handle bitfield
+                            break;
+                        case MessageType.NOT_INTERESTED:
+                            // handle bitfield
+                            break;
+                        case MessageType.HAVE:
+                            // handle bitfield
+                            break;
+                        case MessageType.REQUEST:
+                            // handle bitfield
+                            break;
+                        case MessageType.PIECE:
+                            // handle bitfield
+                            break;
+                    }
+                }
+            } catch (IOException e) {
+                System.out.println("Lost connection with peer " + peerID);
+            }
+        }).start();
+    }
+
+    public static Message receiveMessage(Socket socket) throws IOException {
+        DataInputStream dis = new DataInputStream(socket.getInputStream());
+
+        int messageLength = dis.readInt(); // Read message length 4 bytes
+        byte messageType = dis.readByte(); // Read message type 1 byte
+
+        byte[] payload = null;
+        if (messageLength > 1) {
+            payload = new byte[messageLength - 1]; // minus 1 for the messageType byte
+            dis.readFully(payload); // Read the payload
+        }
+
+        return new Message(messageType, payload);
     }
 
     public void startServer() {
@@ -150,8 +272,12 @@ public class peerProcess {
                     int connectedPeerID = HandshakeMessage.receiveAndValidateHandshake(clientSocket, allPeers);
                     if (connectedPeerID != -1) {
                         System.out.println("Handshake received successfully from " + connectedPeerID);
+
+                        // Handle further communication between nodes.
+                        handlePeerCommunication(clientSocket, connectedPeerID);
                     } else {
                         System.out.println("Handshake failed.");
+                        clientSocket.close();
                     }
                 }
             } catch (IOException e) {
