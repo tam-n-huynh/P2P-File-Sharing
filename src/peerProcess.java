@@ -6,6 +6,8 @@ import java.net.ServerSocket;
 import java.net.Socket;
 import java.util.List;
 import java.util.ArrayList;
+import java.util.BitSet;
+import java.util.concurrent.CountDownLatch;
 
 public class peerProcess {
 
@@ -14,6 +16,8 @@ public class peerProcess {
     private static String hostName;
     private static int listeningPort;
     private static boolean hasFile;
+    private BitSet bitfield;
+    private int numPieces;
 
     // List of all peers read from PeerInfo
     private static final List<PeerInfo> allPeers = new ArrayList<>();
@@ -26,8 +30,9 @@ public class peerProcess {
     private static int unchokingInterval;
     private static int fileSize;
 
-    // Need to add
-    //Bitfield
+    // Countdown latch used to ensure StartServer is ran before connct to previous peers for concurrency issues.
+    private final CountDownLatch latch = new CountDownLatch(1);
+
 
     private static FileWriter logWriter;
 
@@ -48,6 +53,18 @@ public class peerProcess {
         this.fileName = commonConfig.get("FileName");
         this.unchokingInterval = Integer.parseInt(commonConfig.get("UnchokingInterval"));
         this.fileSize = Integer.parseInt(commonConfig.get("FileSize"));
+
+        // Calculate the number of pieces
+        this.numPieces = (int) Math.ceil((double) fileSize / pieceSize);
+
+        // Initialize the bitfield
+        this.bitfield = new BitSet(numPieces); // Initializes all at 0
+
+        if (hasFile) {
+            for (int i = 0; i < this.numPieces; i++) {
+                bitfield.set(i); // turn all the bits to 1 if peer has file
+            }
+        }
     }
 
     public static void main(String[] args) {
@@ -77,9 +94,8 @@ public class peerProcess {
         // Now, the peerProcess has its own information set, and you can proceed to use it
         System.out.println("This peer's ID: " + process.peerID + ", Host: " + process.hostName + ", Port: " + process.listeningPort + ", Has File: " + process.hasFile);
 
-        process.connectToPreviousPeers(); // Connect to all previous peers before it in the list.
         process.startServer(); // Start listening to messages.
-
+        process.connectToPreviousPeers(); // Connect to all previous peers before it in the list.
     }
 
     private static Map<String, String> loadConfiguration(String filePath) {
@@ -172,28 +188,43 @@ public class peerProcess {
         }
     }
 
-    private static void connectToPreviousPeers() {
-        for (PeerInfo peer : allPeers) {
-            // This ensures that all previous will be connected to
-            if (peer.peerID != peerID) {
-                try {
-                    System.out.println("Attempting to connect to peer " + peer.peerID + " at " + peer.hostName + ":" + peer.listeningPort);
-                    Socket socket = new Socket(peer.hostName, peer.listeningPort);
+    private void connectToPreviousPeers() {
+        try {
+            latch.await();
+            for (PeerInfo peer : allPeers) {
+                // This ensures that all previous will be connected to
+                if (peer.peerID != peerID) {
+                    try {
+                        System.out.println("Attempting to connect to peer " + peer.peerID + " at " + peer.hostName + ":" + peer.listeningPort);
+                        Socket socket = new Socket(peer.hostName, peer.listeningPort);
+                        System.out.println("Connected to peer " + peer.peerID);
 
-                    // Connection Established
-                    System.out.println("Connected to peer " + peer.peerID);
-
-                    // Send handshake after establishing connection
-                    HandshakeMessage.sendHandshake(socket, peerID);
-                } catch (IOException e) {
-                    System.out.println("Could not connect to peer " + peer.peerID + ":" + peer.listeningPort);
-                    e.printStackTrace();
+                        // Send handshake and wait for response
+                        boolean handshakeAcknowledged = HandshakeMessage.exchangeHandshake(socket, peerID, allPeers);
+                        if (handshakeAcknowledged) {
+                            // Proceed with sending bitfield and other messages
+                            handlePeerCommunication(socket, peer.peerID);
+                        } else {
+                            System.out.println("Handshake failed with peer " + peer.peerID);
+                            socket.close();
+                        }
+                    } catch (IOException e) {
+                        System.out.println("Could not connect to peer " + peer.peerID + ":" + peer.listeningPort);
+                        e.printStackTrace();
+                    }
+                } else {
+                    // Once we find our Peer, this means we haven't seen the ones ahead, so break.
+                    break;
                 }
-            } else {
-                // Once we find our Peer, this means we haven't seen the ones ahead, so break.
-                break;
             }
+        } catch (InterruptedException e) {
+            Thread.currentThread().interrupt();
         }
+    }
+
+    public void sendBitfieldMessage(Socket peerSocket, BitSet bitfield, int numPieces) throws IOException {
+        Message bitfieldMessage = Message.createBitfieldMessage(bitfield, numPieces);
+        sendMessage(peerSocket, bitfieldMessage);
     }
 
     public void sendMessage(Socket socket, Message message) throws IOException {
@@ -203,11 +234,31 @@ public class peerProcess {
         dos.flush(); // Ensure the message is sent immediately
     }
 
+    public static Message receiveMessage(Socket socket) throws IOException {
+        DataInputStream dis = new DataInputStream(socket.getInputStream());
+
+        int messageLength = dis.readInt(); // Read message length 4 bytes
+        System.out.println("testing");
+        byte messageType = dis.readByte(); // Read message type 1 byte
+
+        byte[] payload = null;
+        if (messageLength > 1) {
+            payload = new byte[messageLength - 1]; // minus 1 for the messageType byte
+            dis.readFully(payload); // Read the payload
+        }
+
+
+
+        return new Message(messageType, payload);
+    }
+
     private void handlePeerCommunication(Socket peerSocket, int peerID) {
         new Thread(() -> {
             try {
-                //Initial setup
-                //sendMessage(peerSocket, createBitfieldMessage());
+                // Initial setup Handshake was just approved! So send bitfield
+                System.out.println("Trying to send bitfield");
+                sendBitfieldMessage(peerSocket, bitfield, numPieces);
+                System.out.println("Done sending Bitfield");
 
                 // Loop to continuously listen for messages.
                 while (true) {
@@ -215,6 +266,7 @@ public class peerProcess {
                     switch (receivedMessage.getType()) {
                         case MessageType.BITFIELD:
                             // handle bitfield
+                            System.out.println("Received a bitfield message");
                             break;
                         case MessageType.CHOKE:
                             // handle bitfield
@@ -245,40 +297,17 @@ public class peerProcess {
         }).start();
     }
 
-    public static Message receiveMessage(Socket socket) throws IOException {
-        DataInputStream dis = new DataInputStream(socket.getInputStream());
-
-        int messageLength = dis.readInt(); // Read message length 4 bytes
-        byte messageType = dis.readByte(); // Read message type 1 byte
-
-        byte[] payload = null;
-        if (messageLength > 1) {
-            payload = new byte[messageLength - 1]; // minus 1 for the messageType byte
-            dis.readFully(payload); // Read the payload
-        }
-
-        return new Message(messageType, payload);
-    }
-
     public void startServer() {
         new Thread(() -> {
             try (ServerSocket serverSocket = new ServerSocket(listeningPort)) {
                 System.out.println("Listening for incoming connections on port " + listeningPort);
+                latch.countDown();
                 while (true) {
                     Socket clientSocket = serverSocket.accept();
                     System.out.println("Connection established with peer: " + clientSocket.getInetAddress().getHostAddress());
 
-                    // Immediately try to receive and validate the handshake
-                    int connectedPeerID = HandshakeMessage.receiveAndValidateHandshake(clientSocket, allPeers);
-                    if (connectedPeerID != -1) {
-                        System.out.println("Handshake received successfully from " + connectedPeerID);
-
-                        // Handle further communication between nodes.
-                        handlePeerCommunication(clientSocket, connectedPeerID);
-                    } else {
-                        System.out.println("Handshake failed.");
-                        clientSocket.close();
-                    }
+                    // Use a separate thread to handle each connection to prevent blocking server thread
+                    new Thread(() -> handleClientConnection(clientSocket)).start();
                 }
             } catch (IOException e) {
                 e.printStackTrace();
@@ -286,4 +315,29 @@ public class peerProcess {
         }).start();
     }
 
+    private void handleClientConnection(Socket clientSocket) {
+        try {
+            // First, validate the incoming handshake
+            int connectedPeerID = HandshakeMessage.receiveAndValidateHandshake(clientSocket, allPeers);
+            if (connectedPeerID != -1) {
+                System.out.println("Handshake received successfully from " + connectedPeerID);
+
+                // Send a handshake message back to complete the handshake exchange
+                HandshakeMessage.sendHandshake(clientSocket, peerID);
+
+                // After exchanging handshakes, proceed with further communication
+                handlePeerCommunication(clientSocket, connectedPeerID);
+            } else {
+                System.out.println("Invalid handshake received. Closing connection.");
+                clientSocket.close(); // Close connection if handshake is invalid
+            }
+        } catch (IOException e) {
+            System.out.println("Error handling client connection: " + e.getMessage());
+            try {
+                clientSocket.close();
+            } catch (IOException ex) {
+                ex.printStackTrace();
+            }
+        }
+    }
 }
