@@ -12,6 +12,10 @@ import java.util.concurrent.*;
 import java.nio.ByteBuffer;
 import java.util.Random;
 import java.util.stream.IntStream;
+import java.util.Collections;
+import java.util.Comparator;
+import java.util.stream.Collectors;
+
 
 public class peerProcess {
     // Peer Info for THIS peer process
@@ -40,6 +44,9 @@ public class peerProcess {
     private final CountDownLatch latch = new CountDownLatch(1);
 
     private static FileWriter logWriter;
+
+    // Scheduler for choking and unchoking
+    private ScheduledExecutorService scheduledExecutorService;
 
     public peerProcess(int peerID) { // Constructor
         this.peerID = peerID;
@@ -72,10 +79,28 @@ public class peerProcess {
                 bitfield.set(i); // turn all the bits to 1 if peer has file
             }
         }
+
+        // Initializing the scheduler
+        scheduledExecutorService = Executors.newScheduledThreadPool(2); // 2 threads for unchoking and optimistic unchoking
+
+        scheduledExecutorService.scheduleAtFixedRate(this::evaluatePreferredNeighbors, 0, unchokingInterval, TimeUnit.SECONDS);
+        scheduledExecutorService.scheduleAtFixedRate(this::selectOptimisticallyUnchokedNeighbor, 0, optimisticUnchokingInterval, TimeUnit.SECONDS);
     }
 
     private void initializeFilePieces() {
-        File file = new File(this.fileName);
+        // Adjust the file path to include the peer directory
+        String directoryPath = "./peer_" + peerID + "/";
+        File directory = new File(directoryPath);
+
+        // Ensure the directory exists
+        if (!directory.exists()) {
+            if (!directory.mkdirs()) {
+                System.err.println("Failed to create directory for peer " + peerID);
+                return;
+            }
+        }
+
+        File file = new File(directoryPath + fileName);
         try (FileInputStream fis = new FileInputStream(file)) {
             long fileSize = file.length();
             int numberOfPieces = (int) Math.ceil((double) fileSize / this.pieceSize);
@@ -92,13 +117,14 @@ public class peerProcess {
             }
             System.out.println("File pieces initialized successfully.");
         } catch (FileNotFoundException e) {
-            System.err.println("File not found: " + this.fileName);
+            System.err.println("File not found: " + directoryPath + fileName);
             e.printStackTrace();
         } catch (IOException e) {
-            System.err.println("Error reading the file: " + this.fileName);
+            System.err.println("Error reading the file: " + directoryPath + fileName);
             e.printStackTrace();
         }
     }
+
 
 
     public static void main(String[] args) {
@@ -685,4 +711,59 @@ public class peerProcess {
 
     // MAIN CODE FOR HANDLING THE LOGIC OF SENDING MESSAGES AND GETTING PIECES.
     // Next Step: Scheduler for choking and unchoking neighbors.
+
+    // Function for picking preferred neighbors
+    private void evaluatePreferredNeighbors() {
+
+        List<Neighbor> interestedNeighbors = neighbors.values().stream()
+                .filter(Neighbor::isInterested)
+                .collect(Collectors.toList());
+
+        List<Neighbor> selectedNeighbors;
+
+        if (hasFile) {
+            // If peer has complete file, select randomly
+            Collections.shuffle(interestedNeighbors);
+            selectedNeighbors = interestedNeighbors.stream()
+                    .limit(numPreferredNeighbors)
+                    .collect(Collectors.toList());
+        } else {
+            // Select based on download rates (assuming downloadRate is implemented in Neighbor)
+            selectedNeighbors = interestedNeighbors.stream()
+                    .sorted(Comparator.comparing(Neighbor::getPrevDownloadRate).reversed())
+                    .limit(numPreferredNeighbors)
+                    .collect(Collectors.toList());
+        }
+
+        // Unchoke selected neighbors
+        selectedNeighbors.forEach(neighbor -> {
+            if (neighbor.isChoked()) {
+                sendUnchokeMessage(neighbor);
+            }
+        });
+
+        // Choke all other interested neighbors not selected
+        interestedNeighbors.stream()
+                .filter(neighbor -> !selectedNeighbors.contains(neighbor))
+                .forEach(neighbor -> {
+                    if (!neighbor.isChoked()) {
+                        sendChokeMessage(neighbor);
+                    }
+                });
+    }
+
+
+    private void selectOptimisticallyUnchokedNeighbor() {
+        // Filter for interested but choked neighbors
+        List<Neighbor> chokedInterestedNeighbors = neighbors.values().stream()
+                .filter(n -> !n.isChoked() && n.isInterested())
+                .collect(Collectors.toList());
+
+        if (!chokedInterestedNeighbors.isEmpty()) {
+            // Randomly select one neighbor to unchoke optimistically
+            Neighbor optimisticallyUnchokedNeighbor = chokedInterestedNeighbors.get(new Random().nextInt(chokedInterestedNeighbors.size()));
+            sendUnchokeMessage(optimisticallyUnchokedNeighbor);
+            System.out.println("Optimistically unchoked peer " + optimisticallyUnchokedNeighbor.getPeerID());
+        }
+    }
 }

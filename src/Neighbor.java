@@ -8,6 +8,7 @@ public class Neighbor {
     private boolean isInterested;
     private Socket socket;
     private BitSet pieces;
+    private long prevDownloadRate;
 
     public Neighbor(int peerID, Socket socket) {
         this.peerID = peerID;
@@ -15,6 +16,7 @@ public class Neighbor {
         this.isChoked = true; // Default already choked
         this.isInterested = false; // default not interested
         this.pieces = new BitSet(); // Initialize bitset based on total known pieces
+        this.prevDownloadRate = 0; // Initialize download rate as 0 (never downloaded before)
     }
 
     // Getters and Settings
@@ -49,5 +51,13 @@ public class Neighbor {
     public void updatePieces(BitSet newPieces) {
         this.pieces.or(newPieces);
     } // can't lose pieces (in our program)
+
+    public long getPrevDownloadRate() {
+        return prevDownloadRate;
+    }
+
+    public void setPrevDownloadRate(long prevDownloadRate) {
+        this.prevDownloadRate = prevDownloadRate;
+    }
 
 }
