@@ -22,6 +22,11 @@ public class Message {
         return this.messageType;
     }
 
+    public byte[] getPayload() {
+        return payload;
+    }
+
+
     public byte[] getBytes() {
         // Function used to convert message to bytes to send
 
@@ -75,8 +80,10 @@ public class Message {
         return new Message(MessageType.NOT_INTERESTED, null);
     }
 
-    public static Message createHaveMessage() {
-        return new Message(MessageType.HAVE, null);
+    public static Message createHaveMessage(int pieceIndex) {
+        ByteBuffer buffer = ByteBuffer.allocate(4); // 4 byte piece index field
+        buffer.putInt(pieceIndex);
+        return new Message(MessageType.HAVE, buffer.array());
     }
 
     public static Message createBitfieldMessage(BitSet bitfield, int numPieces) {
@@ -84,12 +91,18 @@ public class Message {
         return new Message(MessageType.BITFIELD, bitfieldPayload);
     }
 
-    public static Message createRequestMessage() {
-        return new Message(MessageType.REQUEST, null);
+    public static Message createRequestMessage(int pieceIndex) {
+        ByteBuffer buffer = ByteBuffer.allocate(4); // 4 byte piece index field
+        buffer.putInt(pieceIndex);
+        return new Message(MessageType.REQUEST, buffer.array());
     }
 
-    public static Message createPieceMessage() {
-        return new Message(MessageType.PIECE, null);
+    public static Message createPieceMessage(int pieceIndex, byte[] pieceContent) {
+        ByteBuffer buffer = ByteBuffer.allocate(4 + pieceContent.length); // 4 for piece index + the content after
+        buffer.putInt(pieceIndex);
+        buffer.put(pieceContent);
+        return new Message(MessageType.PIECE, buffer.array());
     }
+
 
 }

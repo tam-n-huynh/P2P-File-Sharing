@@ -15,6 +15,7 @@ public class HandshakeMessage {
             baos.write(HEADER.getBytes());
             baos.write(new byte[ZERO_BITS_LENGTH]); // Write 10 zero bytes
             baos.write(ByteBuffer.allocate(Integer.SIZE / Byte.SIZE).putInt(peerID).array());
+
             return baos.toByteArray();
         } catch (IOException e) {
             // This should never happen with a ByteArrayOutputStream

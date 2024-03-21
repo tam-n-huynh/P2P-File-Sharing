@@ -1,4 +1,5 @@
 public class MessageType {
+    
     public static final byte CHOKE = 0;
     public static final byte UNCHOKE = 1;
     public static final byte INTERESTED = 2;
