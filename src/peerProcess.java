@@ -343,22 +343,20 @@ public class peerProcess {
             unchokingNeighbor.setChoked(false);
             System.out.println("Peer " + peerID + " is unchoking us.");
 
-            // Determine the pieces this peer needs that the unchoking neighbor has
             BitSet neededPieces = (BitSet) bitfield.clone();
-            neededPieces.flip(0, numPieces); // Flip the bits to represent needed pieces
-            neededPieces.and(unchokingNeighbor.getPieces()); // AND with the pieces the neighbor has
+            neededPieces.flip(0, numPieces);
+            neededPieces.and(unchokingNeighbor.getPieces());
+
+            // Remove pieces that have already been requested from any neighbor
+            neighbors.values().forEach(n -> n.getRequestedPieces().forEach(neededPieces::clear));
 
             if (!neededPieces.isEmpty()) {
-                // Convert BitSet to an IntStream, then to an array
-                int[] neededPiecesArray = IntStream.range(0, neededPieces.length())
-                        .filter(neededPieces::get)
-                        .toArray();
-                // Select a random piece from the array
+                int[] neededPiecesArray = neededPieces.stream().toArray();
                 int randomPieceIndex = neededPiecesArray[random.nextInt(neededPiecesArray.length)];
 
-                // Send request for this randomly selected piece
                 try {
                     sendRequestMessage(unchokingNeighbor, randomPieceIndex);
+                    unchokingNeighbor.addRequestedPiece(randomPieceIndex); // Track this request
                 } catch (IOException e) {
                     System.out.println("Failed to send request message to " + peerID);
                     e.printStackTrace();
@@ -368,7 +366,6 @@ public class peerProcess {
             System.out.println("Received unchoke from unknown peer: " + peerID);
         }
     }
-
 
 
     private void handleInterested(int peerID) {
@@ -422,30 +419,29 @@ public class peerProcess {
     }
 
     private void handlePiece(int pieceIndex, byte[] pieceContent, int senderPeerID) throws IOException {
-        // Store the received piece in memory
         filePieces.put(pieceIndex, pieceContent);
-
-        // Update local bitfield
         bitfield.set(pieceIndex);
         System.out.println("Received piece " + pieceIndex + " from peer " + senderPeerID);
 
-        // Broadcast "have" message to all peers
         sendHaveMessage(pieceIndex);
 
-        // Check if still interested in sender
         Neighbor senderNeighbor = neighbors.get(senderPeerID);
         if (senderNeighbor != null) {
+            senderNeighbor.removeRequestedPiece(pieceIndex); // Update requested pieces
+
             if (!isInterestedIn(senderNeighbor)) {
                 sendNotInterestedMessage(senderNeighbor);
                 System.out.println("Not interested in peer " + senderPeerID + " anymore.");
+            } else {
+                // Optionally, request next piece immediately if still interested
             }
         }
 
-        // Check for completion and assemble file if done
         if (isDownloadComplete()) {
             assembleFile();
         }
     }
+
 
     private boolean isDownloadComplete() {
         return bitfield.cardinality() == numPieces; // Check if all pieces are received
@@ -751,7 +747,6 @@ public class peerProcess {
                     }
                 });
     }
-
 
     private void selectOptimisticallyUnchokedNeighbor() {
         // Filter for interested but choked neighbors

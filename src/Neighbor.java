@@ -1,5 +1,8 @@
 import java.net.Socket;
 import java.util.BitSet;
+import java.util.Set;
+import java.util.HashSet;
+
 
 
 public class Neighbor {
@@ -9,6 +12,7 @@ public class Neighbor {
     private Socket socket;
     private BitSet pieces;
     private long prevDownloadRate;
+    private Set<Integer> requestedPieces;
 
     public Neighbor(int peerID, Socket socket) {
         this.peerID = peerID;
@@ -17,6 +21,7 @@ public class Neighbor {
         this.isInterested = false; // default not interested
         this.pieces = new BitSet(); // Initialize bitset based on total known pieces
         this.prevDownloadRate = 0; // Initialize download rate as 0 (never downloaded before)
+        this.requestedPieces = new HashSet<>();
     }
 
     // Getters and Settings
@@ -60,4 +65,19 @@ public class Neighbor {
         this.prevDownloadRate = prevDownloadRate;
     }
 
+    public void addRequestedPiece(int pieceIndex) {
+        this.requestedPieces.add(pieceIndex);
+    }
+
+    public void removeRequestedPiece(int pieceIndex) {
+        this.requestedPieces.remove(pieceIndex);
+    }
+
+    public boolean hasRequestedPiece(int pieceIndex) {
+        return this.requestedPieces.contains(pieceIndex);
+    }
+
+    public Set<Integer> getRequestedPieces() {
+        return requestedPieces;
+    }
 }
