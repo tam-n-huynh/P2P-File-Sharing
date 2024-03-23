@@ -6,9 +6,6 @@ import java.util.Map;
 import java.util.HashMap;
 import java.util.concurrent.ScheduledFuture;
 
-
-
-
 public class Neighbor {
     private int peerID;
     private boolean isChoked; // Are WE choking this neighbor or not

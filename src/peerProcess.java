@@ -16,7 +16,6 @@ import java.util.Collections;
 import java.util.Comparator;
 import java.util.stream.Collectors;
 
-
 public class peerProcess {
     // Peer Info for THIS peer process
     private static int peerID;
@@ -70,7 +69,6 @@ public class peerProcess {
         // Calculate the number of pieces
         this.numPieces = (int) Math.ceil((double) fileSize / pieceSize);
 
-
         // Initialize the bitfield
         this.bitfield = new BitSet(numPieces); // Initializes all at 0
 
@@ -109,8 +107,8 @@ public class peerProcess {
         File file = new File(directoryPath + fileName);
         try (FileInputStream fis = new FileInputStream(file)) {
             int numberOfPieces = (int) Math.ceil((double) this.fileSize / this.pieceSize);
-            System.out.println("PASSED IN numPieces: " + numPieces);
-            System.out.println("CALCULATED numPieces: " + numberOfPieces);
+            // System.out.println("PASSED IN numPieces: " + numPieces);
+            // System.out.println("CALCULATED numPieces: " + numberOfPieces);
 
             for (int pieceIndex = 0; pieceIndex < numberOfPieces; pieceIndex++) {
                 int currentPieceSize = this.pieceSize;
@@ -295,7 +293,7 @@ public class peerProcess {
                         e.printStackTrace();
                     }
                 } else {
-                    // Once we find our Peer, this means we haven't seen the ones ahead, so break.
+                    // Once we find our own peerInfo, this means we haven't seen the ones ahead, so break.
                     break;
                 }
             }
@@ -306,18 +304,13 @@ public class peerProcess {
 
     public void sendBitfieldMessage(Socket peerSocket, BitSet bitfield, int numPieces) throws IOException {
         // Debug: Print the actual BitSet size and the expected numPieces
-        System.out.println("Sending Bitfield: Actual BitSet size = " + bitfield.length() + ", Expected numPieces = " + numPieces);
+        // System.out.println("Sending Bitfield: Actual BitSet size = " + bitfield.length() + ", Expected numPieces = " + numPieces);
 
-        // Debug: Convert the BitSet to a byte array and print its length
         byte[] bitfieldBytes = bitfield.toByteArray();
-        System.out.println("Bitfield byte array length (before sending) = " + bitfieldBytes.length);
 
         // Create and send the bitfield message
         Message bitfieldMessage = Message.createBitfieldMessage(bitfield, numPieces);
         sendMessage(peerSocket, bitfieldMessage);
-
-        // Debug: Print the contents of the BitSet for verification
-        System.out.println("Bitfield contents: " + bitfield.toString());
     }
 
 
@@ -328,6 +321,7 @@ public class peerProcess {
         dos.flush(); // Ensure the message is sent immediately
     }
 
+    // Function for receiving and parsing message
     public static Message receiveMessage(Socket socket) throws IOException {
         DataInputStream dis = new DataInputStream(socket.getInputStream());
 
@@ -342,10 +336,9 @@ public class peerProcess {
         }
 
         if (messageType == MessageType.BITFIELD) {
-            // Since payload length = messageLength - 1 (due to messageType byte), it represents the bitfield length in bytes
-            System.out.println("Received bitfield message with payload length (bitfield length in bytes): " + payload.length);
+            // Debug: Since payload length = messageLength - 1 (due to messageType byte), it represents the bitfield length in bytes
+            // System.out.println("Received bitfield message with payload length (bitfield length in bytes): " + payload.length);
         }
-
 
         return new Message(messageType, payload);
     }
@@ -396,9 +389,8 @@ public class peerProcess {
         }
     }
 
-
     private void handleBitfieldMessage(int peerID, BitSet senderBitfield) {
-        System.out.println("Received bitfield message from " + peerID);
+        // System.out.println("Received bitfield message from " + peerID);
         Neighbor senderNeighbor = neighbors.get(peerID);
         if (senderNeighbor != null) {
             senderNeighbor.updatePieces(senderBitfield);
@@ -511,7 +503,7 @@ public class peerProcess {
             // Select a random piece from the list
             int randomIndex = new Random().nextInt(neededPieceList.size());
             int nextNeededPiece = neededPieceList.get(randomIndex);
-            System.out.println("RANDEX: " + nextNeededPiece);
+            // System.out.println("RANDEX: " + nextNeededPiece);
 
             try {
                 sendRequestMessage(neighbor, nextNeededPiece);
@@ -527,8 +519,8 @@ public class peerProcess {
 
 
     private boolean isDownloadComplete() {
-        System.out.println("BITFIELD CARDINALITY: " + bitfield.cardinality());
-        System.out.println("NUM PIECES: " + numPieces);
+        // System.out.println("BITFIELD CARDINALITY: " + bitfield.cardinality());
+        // System.out.println("NUM PIECES: " + numPieces);
         return bitfield.cardinality() == numPieces; // Check if all pieces are received
     }
 
@@ -644,9 +636,6 @@ public class peerProcess {
             System.out.println("Already requested piece " + pieceIndex + " from peer " + neighbor.getPeerID());
         }
     }
-
-
-
 
     private void sendPieceMessage(Neighbor neighbor, int pieceIndex, byte[] pieceContent) {
         try {
@@ -779,6 +768,7 @@ public class peerProcess {
         }).start();
     }
 
+    // Converting the payload back into a bitset. Taking into account there may be extra 0s at the end.
     public static BitSet fromByteArray(byte[] bytes, int numPieces) {
         BitSet bitSet = new BitSet(numPieces);
         for (int i = 0; i < numPieces; i++) {
@@ -788,7 +778,6 @@ public class peerProcess {
         }
         return bitSet;
     }
-
 
     private void addNeighbor(int peerID, Socket socket) {
         // Check if the neighbor already exists to avoid duplication
@@ -828,7 +817,6 @@ public class peerProcess {
 
 
     // MAIN CODE FOR HANDLING THE LOGIC OF SENDING MESSAGES AND GETTING PIECES.
-    // Next Step: Scheduler for choking and unchoking neighbors.
 
     // Function for picking preferred neighbors
     private void evaluatePreferredNeighbors() {
