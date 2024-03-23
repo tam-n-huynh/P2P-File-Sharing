@@ -2,6 +2,10 @@ import java.net.Socket;
 import java.util.BitSet;
 import java.util.Set;
 import java.util.HashSet;
+import java.util.Map;
+import java.util.HashMap;
+import java.util.concurrent.ScheduledFuture;
+
 
 
 
@@ -83,18 +87,14 @@ public class Neighbor {
     }
 
     // Methods to add, check, and remove request timeouts...
-    public void addRequestTimeout(int pieceIndex, ScheduledFuture<?> timeoutTask) {
+    public void addRequestTimeoutTask(int pieceIndex, ScheduledFuture<?> timeoutTask) {
         requestTimeoutTasks.put(pieceIndex, timeoutTask);
     }
 
-    public boolean hasTimeoutForPiece(int pieceIndex) {
-        return requestTimeoutTasks.containsKey(pieceIndex);
-    }
-
-    public void removeRequestTimeout(int pieceIndex) {
+    public void cancelRequestTimeout(int pieceIndex) {
         ScheduledFuture<?> timeoutTask = requestTimeoutTasks.remove(pieceIndex);
         if (timeoutTask != null) {
-            timeoutTask.cancel(false);
+            timeoutTask.cancel(true); // Cancel the task and interrupt if running
         }
     }
 }

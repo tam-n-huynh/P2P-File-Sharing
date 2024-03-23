@@ -70,6 +70,7 @@ public class peerProcess {
         // Calculate the number of pieces
         this.numPieces = (int) Math.ceil((double) fileSize / pieceSize);
 
+
         // Initialize the bitfield
         this.bitfield = new BitSet(numPieces); // Initializes all at 0
 
@@ -78,6 +79,11 @@ public class peerProcess {
             for (int i = 0; i < this.numPieces; i++) {
                 bitfield.set(i); // turn all the bits to 1 if peer has file
             }
+            System.out.println("TOTAL: " + this.numPieces);
+            System.out.println("Bitfield length NOW: " + bitfield.length());
+        }
+        else {
+            System.out.println("We don't have file, calculated numPieces: " + numPieces);
         }
 
         // Initializing the scheduler
@@ -102,8 +108,9 @@ public class peerProcess {
 
         File file = new File(directoryPath + fileName);
         try (FileInputStream fis = new FileInputStream(file)) {
-            long fileSize = file.length();
-            int numberOfPieces = (int) Math.ceil((double) fileSize / this.pieceSize);
+            int numberOfPieces = (int) Math.ceil((double) this.fileSize / this.pieceSize);
+            System.out.println("PASSED IN numPieces: " + numPieces);
+            System.out.println("CALCULATED numPieces: " + numberOfPieces);
 
             for (int pieceIndex = 0; pieceIndex < numberOfPieces; pieceIndex++) {
                 int currentPieceSize = this.pieceSize;
@@ -298,9 +305,21 @@ public class peerProcess {
     }
 
     public void sendBitfieldMessage(Socket peerSocket, BitSet bitfield, int numPieces) throws IOException {
+        // Debug: Print the actual BitSet size and the expected numPieces
+        System.out.println("Sending Bitfield: Actual BitSet size = " + bitfield.length() + ", Expected numPieces = " + numPieces);
+
+        // Debug: Convert the BitSet to a byte array and print its length
+        byte[] bitfieldBytes = bitfield.toByteArray();
+        System.out.println("Bitfield byte array length (before sending) = " + bitfieldBytes.length);
+
+        // Create and send the bitfield message
         Message bitfieldMessage = Message.createBitfieldMessage(bitfield, numPieces);
         sendMessage(peerSocket, bitfieldMessage);
+
+        // Debug: Print the contents of the BitSet for verification
+        System.out.println("Bitfield contents: " + bitfield.toString());
     }
+
 
     public void sendMessage(Socket socket, Message message) throws IOException {
         DataOutputStream dos = new DataOutputStream(socket.getOutputStream());
@@ -313,7 +332,6 @@ public class peerProcess {
         DataInputStream dis = new DataInputStream(socket.getInputStream());
 
         int messageLength = dis.readInt(); // Read message length 4 bytes
-        System.out.println("testing");
         byte messageType = dis.readByte(); // Read message type 1 byte
 
         byte[] payload = null;
@@ -322,6 +340,12 @@ public class peerProcess {
             payload = new byte[messageLength - 1]; // minus 1 for the messageType byte
             dis.readFully(payload); // Read the payload
         }
+
+        if (messageType == MessageType.BITFIELD) {
+            // Since payload length = messageLength - 1 (due to messageType byte), it represents the bitfield length in bytes
+            System.out.println("Received bitfield message with payload length (bitfield length in bytes): " + payload.length);
+        }
+
 
         return new Message(messageType, payload);
     }
@@ -345,28 +369,33 @@ public class peerProcess {
             System.out.println("Peer " + peerID + " is unchoking us.");
 
             BitSet neededPieces = (BitSet) bitfield.clone();
-            neededPieces.flip(0, numPieces);
+            neededPieces.flip(0, numPieces); // Ensure only within range
             neededPieces.and(unchokingNeighbor.getPieces());
 
             // Remove pieces that have already been requested from any neighbor
             neighbors.values().forEach(n -> n.getRequestedPieces().forEach(neededPieces::clear));
 
             if (!neededPieces.isEmpty()) {
-                int[] neededPiecesArray = neededPieces.stream().toArray();
-                int randomPieceIndex = neededPiecesArray[random.nextInt(neededPiecesArray.length)];
+                // Convert BitSet to a list of valid piece indices
+                List<Integer> validPieceIndices = neededPieces.stream().boxed().collect(Collectors.toList());
+                if (!validPieceIndices.isEmpty()) {
+                    int randomIndex = random.nextInt(validPieceIndices.size());
+                    int randomPieceIndex = validPieceIndices.get(randomIndex);
 
-                try {
-                    sendRequestMessage(unchokingNeighbor, randomPieceIndex);
-                    unchokingNeighbor.addRequestedPiece(randomPieceIndex); // Track this request
-                } catch (IOException e) {
-                    System.out.println("Failed to send request message to " + peerID);
-                    e.printStackTrace();
+                    try {
+                        sendRequestMessage(unchokingNeighbor, randomPieceIndex);
+                        unchokingNeighbor.addRequestedPiece(randomPieceIndex); // Track this request
+                    } catch (IOException e) {
+                        System.out.println("Failed to send request message to " + peerID);
+                        e.printStackTrace();
+                    }
                 }
             }
         } else {
             System.out.println("Received unchoke from unknown peer: " + peerID);
         }
     }
+
 
     private void handleBitfieldMessage(int peerID, BitSet senderBitfield) {
         System.out.println("Received bitfield message from " + peerID);
@@ -449,25 +478,62 @@ public class peerProcess {
         if (senderNeighbor != null) {
             senderNeighbor.removeRequestedPiece(pieceIndex); // Update requested pieces
 
+            // Cancel the timeout for the received piece
+            senderNeighbor.cancelRequestTimeout(pieceIndex);
+
             if (!isInterestedIn(senderNeighbor)) {
                 sendNotInterestedMessage(senderNeighbor);
                 System.out.println("Not interested in peer " + senderPeerID + " anymore.");
             } else {
-                // Optionally, request next piece immediately if still interested
+                // Continue requesting next needed piece if still interested
+                requestNextNeededPiece(senderNeighbor);
             }
         }
 
         if (isDownloadComplete()) {
+            System.out.println("DOWNLOAD COMPLETE");
             assembleFile();
         }
     }
 
+    private void requestNextNeededPiece(Neighbor neighbor) {
+        BitSet availableAndNeededPieces = (BitSet) neighbor.getPieces().clone();
+        availableAndNeededPieces.andNot(bitfield); // Find pieces the neighbor has that we need
+
+        // Convert BitSet to an ArrayList for easy random access
+        ArrayList<Integer> neededPieceList = new ArrayList<>();
+        availableAndNeededPieces.stream().forEach(neededPieceList::add);
+
+        // Filter out pieces that have already been requested
+        neededPieceList.removeIf(neighbor::hasRequestedPiece);
+
+        if (!neededPieceList.isEmpty()) {
+            // Select a random piece from the list
+            int randomIndex = new Random().nextInt(neededPieceList.size());
+            int nextNeededPiece = neededPieceList.get(randomIndex);
+            System.out.println("RANDEX: " + nextNeededPiece);
+
+            try {
+                sendRequestMessage(neighbor, nextNeededPiece);
+            } catch (IOException e) {
+                System.err.println("Failed to send request message for piece " + nextNeededPiece + ": " + e.getMessage());
+                e.printStackTrace();
+            }
+        }
+    }
+
+
+
+
 
     private boolean isDownloadComplete() {
+        System.out.println("BITFIELD CARDINALITY: " + bitfield.cardinality());
+        System.out.println("NUM PIECES: " + numPieces);
         return bitfield.cardinality() == numPieces; // Check if all pieces are received
     }
 
     private void assembleFile() throws IOException {
+        System.out.println("ATTEMPTING TO ASSEMBLE");
         String directoryPath = "peer_" + peerID; // Directory name
         File directory = new File(directoryPath);
         if (!directory.exists()) {
@@ -503,6 +569,8 @@ public class peerProcess {
     // SEND MESSAGES FOR BROADCASTING
     private void sendChokeMessage(Neighbor neighbor) {
         try {
+            neighbor.setChoked(true);
+
             Message chokeMessage = new Message(MessageType.CHOKE);
             sendMessage(neighbor.getSocket(), chokeMessage);
             System.out.println("Sent Choke message to peer " + neighbor.getPeerID());
@@ -549,16 +617,35 @@ public class peerProcess {
     }
 
     private void sendRequestMessage(Neighbor neighbor, int pieceIndex) throws IOException {
-        // Construct the request message payload with the piece index
-        ByteBuffer buffer = ByteBuffer.allocate(4); // Size of an integer
-        buffer.putInt(pieceIndex);
-        byte[] payload = buffer.array();
+        if (!neighbor.hasRequestedPiece(pieceIndex)) {
+            // Prepare and send the request message
+            ByteBuffer buffer = ByteBuffer.allocate(4);
+            buffer.putInt(pieceIndex);
+            byte[] payload = buffer.array();
 
-        // Create and send the request message
-        Message requestMessage = new Message(MessageType.REQUEST, payload);
-        sendMessage(neighbor.getSocket(), requestMessage);
-        System.out.println("Sent REQUEST message for piece " + pieceIndex + " to peer " + neighbor.getPeerID());
+            Message requestMessage = new Message(MessageType.REQUEST, payload);
+            sendMessage(neighbor.getSocket(), requestMessage);
+            System.out.println("Sent REQUEST message for piece " + pieceIndex + " to peer " + neighbor.getPeerID());
+
+            // Mark the piece as requested
+            neighbor.addRequestedPiece(pieceIndex);
+
+            // Schedule a task to handle request timeout
+            ScheduledFuture<?> timeoutTask = scheduledExecutorService.schedule(() -> {
+                System.out.println("Request for piece " + pieceIndex + " to peer " + neighbor.getPeerID() + " timed out.");
+                // Logic to handle timeout, e.g., try requesting from a different neighbor
+                neighbor.removeRequestedPiece(pieceIndex);
+                // Further action can be taken here if the request times out, such as requesting the piece from another peer
+            }, 10, TimeUnit.SECONDS); // Adjust the timeout period according to your needs
+
+            // Store the timeout task to potentially cancel it later if the piece is received before the timeout
+            neighbor.addRequestTimeoutTask(pieceIndex, timeoutTask);
+        } else {
+            System.out.println("Already requested piece " + pieceIndex + " from peer " + neighbor.getPeerID());
+        }
     }
+
+
 
 
     private void sendPieceMessage(Neighbor neighbor, int pieceIndex, byte[] pieceContent) {
@@ -613,9 +700,8 @@ public class peerProcess {
         new Thread(() -> {
             try {
                 // Initial setup Handshake was just approved! So send bitfield
-                System.out.println("Trying to send bitfield");
-                sendBitfieldMessage(peerSocket, bitfield, numPieces);
-                System.out.println("Done sending Bitfield");
+                System.out.println("Sending bitfield, size is " + bitfield.size());
+                sendBitfieldMessage(peerSocket, bitfield, this.numPieces);
 
                 // Loop to continuously listen for messages.
                 while (true) {
@@ -624,7 +710,8 @@ public class peerProcess {
                     switch (receivedMessage.getType()) {
                         case MessageType.BITFIELD:
                             // handle bitfield
-                            BitSet senderBitfield = BitSet.valueOf(receivedMessage.getPayload());
+                            BitSet senderBitfield = fromByteArray(receivedMessage.getPayload(), numPieces);
+                            System.out.println("Received bitfield length in handlePeerCom: " + senderBitfield.length());
                             handleBitfieldMessage(peerID, senderBitfield);
                             break;
                         case MessageType.CHOKE:
@@ -691,6 +778,17 @@ public class peerProcess {
             }
         }).start();
     }
+
+    public static BitSet fromByteArray(byte[] bytes, int numPieces) {
+        BitSet bitSet = new BitSet(numPieces);
+        for (int i = 0; i < numPieces; i++) {
+            if ((bytes[i / 8] & (1 << (7 - (i % 8)))) > 0) {
+                bitSet.set(i);
+            }
+        }
+        return bitSet;
+    }
+
 
     private void addNeighbor(int peerID, Socket socket) {
         // Check if the neighbor already exists to avoid duplication
@@ -775,9 +873,9 @@ public class peerProcess {
     }
 
     private void selectOptimisticallyUnchokedNeighbor() {
-        // Filter for interested but choked neighbors
+        // Correctly filter for interested AND choked neighbors
         List<Neighbor> chokedInterestedNeighbors = neighbors.values().stream()
-                .filter(n -> !n.isChoked() && n.isInterested())
+                .filter(n -> n.isChoked() && n.isInterested())
                 .collect(Collectors.toList());
 
         if (!chokedInterestedNeighbors.isEmpty()) {
@@ -787,4 +885,5 @@ public class peerProcess {
             System.out.println("Optimistically unchoked peer " + optimisticallyUnchokedNeighbor.getPeerID());
         }
     }
+
 }
