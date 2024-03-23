@@ -4,7 +4,7 @@ cd src
 javac -d ../out *.java     
 
 
-## Running the peer
+## Running the peer locally
 cd out
 
 EX:
