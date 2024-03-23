@@ -271,6 +271,8 @@ public class peerProcess {
                         Socket socket = new Socket(peer.hostName, peer.listeningPort);
                         System.out.println("Connected to peer " + peer.peerID);
 
+                        addNeighbor(peer.peerID, socket);
+
                         // Send handshake and wait for response
                         boolean handshakeAcknowledged = HandshakeMessage.exchangeHandshake(socket, peerID, allPeers);
 
@@ -340,7 +342,6 @@ public class peerProcess {
         Random random = new Random();
 
         if (unchokingNeighbor != null) {
-            unchokingNeighbor.setChoked(false);
             System.out.println("Peer " + peerID + " is unchoking us.");
 
             BitSet neededPieces = (BitSet) bitfield.clone();
@@ -367,6 +368,25 @@ public class peerProcess {
         }
     }
 
+    private void handleBitfieldMessage(int peerID, BitSet senderBitfield) {
+        System.out.println("Received bitfield message from " + peerID);
+        Neighbor senderNeighbor = neighbors.get(peerID);
+        if (senderNeighbor != null) {
+            senderNeighbor.updatePieces(senderBitfield);
+
+            BitSet neededPieces = (BitSet)senderBitfield.clone();
+            neededPieces.andNot(bitfield);
+
+            if (!neededPieces.isEmpty()) {
+                sendInterestedMessage(senderNeighbor);
+            } else {
+                sendNotInterestedMessage(senderNeighbor);
+            }
+        }
+        else {
+            System.out.println("There is an error, neighbor should be in the list by now.");
+        }
+    }
 
     private void handleInterested(int peerID) {
         // Mark the peer as interested
@@ -494,6 +514,9 @@ public class peerProcess {
 
     private void sendUnchokeMessage(Neighbor neighbor) {
         try {
+            // Set that neighbor locally as unchoked
+            neighbor.setChoked(false);
+
             Message unchokeMessage = new Message(MessageType.UNCHOKE);
             sendMessage(neighbor.getSocket(), unchokeMessage);
             System.out.println("Sent Unchoke message to peer " + neighbor.getPeerID());
@@ -601,7 +624,8 @@ public class peerProcess {
                     switch (receivedMessage.getType()) {
                         case MessageType.BITFIELD:
                             // handle bitfield
-                            System.out.println("Received a bitfield message");
+                            BitSet senderBitfield = BitSet.valueOf(receivedMessage.getPayload());
+                            handleBitfieldMessage(peerID, senderBitfield);
                             break;
                         case MessageType.CHOKE:
                             // handle CHOKE
@@ -683,10 +707,10 @@ public class peerProcess {
 
             if (connectedPeerID != -1) {
                 System.out.println("Handshake received successfully from " + connectedPeerID);
+                addNeighbor(connectedPeerID, clientSocket);
 
                 // Send a handshake message back to complete the handshake exchange
                 HandshakeMessage.sendHandshake(clientSocket, peerID);
-                addNeighbor(connectedPeerID, clientSocket);
 
                 // After exchanging handshakes, proceed with further communication
                 handlePeerCommunication(clientSocket, connectedPeerID);
@@ -710,6 +734,7 @@ public class peerProcess {
 
     // Function for picking preferred neighbors
     private void evaluatePreferredNeighbors() {
+        System.out.println("Evaluating peers.....");
 
         List<Neighbor> interestedNeighbors = neighbors.values().stream()
                 .filter(Neighbor::isInterested)
@@ -734,6 +759,7 @@ public class peerProcess {
         // Unchoke selected neighbors
         selectedNeighbors.forEach(neighbor -> {
             if (neighbor.isChoked()) {
+                System.out.println("Sending unchoke to neighbor: " + neighbor.getPeerID());
                 sendUnchokeMessage(neighbor);
             }
         });

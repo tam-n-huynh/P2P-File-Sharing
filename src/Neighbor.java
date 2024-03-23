@@ -7,12 +7,13 @@ import java.util.HashSet;
 
 public class Neighbor {
     private int peerID;
-    private boolean isChoked;
-    private boolean isInterested;
+    private boolean isChoked; // Are WE choking this neighbor or not
+    private boolean isInterested; // Is THIS PEER interested in us or not
     private Socket socket;
     private BitSet pieces;
     private long prevDownloadRate;
-    private Set<Integer> requestedPieces;
+    private Set<Integer> requestedPieces; // Pieces we are requesting from THIS PEER
+    private Map<Integer, ScheduledFuture<?>> requestTimeoutTasks = new HashMap<>();
 
     public Neighbor(int peerID, Socket socket) {
         this.peerID = peerID;
@@ -79,5 +80,21 @@ public class Neighbor {
 
     public Set<Integer> getRequestedPieces() {
         return requestedPieces;
+    }
+
+    // Methods to add, check, and remove request timeouts...
+    public void addRequestTimeout(int pieceIndex, ScheduledFuture<?> timeoutTask) {
+        requestTimeoutTasks.put(pieceIndex, timeoutTask);
+    }
+
+    public boolean hasTimeoutForPiece(int pieceIndex) {
+        return requestTimeoutTasks.containsKey(pieceIndex);
+    }
+
+    public void removeRequestTimeout(int pieceIndex) {
+        ScheduledFuture<?> timeoutTask = requestTimeoutTasks.remove(pieceIndex);
+        if (timeoutTask != null) {
+            timeoutTask.cancel(false);
+        }
     }
 }
